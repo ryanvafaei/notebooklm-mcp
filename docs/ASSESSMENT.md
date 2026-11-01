@@ -230,7 +230,7 @@ requested. It exposes 30 tools and 4 prompts.
 | Study profile | `~/.notebooklm-study/study_profile.json`, atomic write, 0600, field size caps. |
 
 **Verification:**
-- 23 pytest tests use a fake client built from the library's real dataclasses.
+- 23 pytest tests (59 after the network-guard follow-up) use a fake client built from the library's real dataclasses.
 - A mutation check confirmed that reintroducing B1 fails the suite.
 - An end-to-end stdio run of both entry points (`notebooklm-study-mcp` and legacy
   `python server.py`) completed the handshake in about 1.3 s with no login. It listed 30 tools
@@ -238,6 +238,44 @@ requested. It exposes 30 tools and 4 prompts.
 - Ruff lint and format are clean.
 - **Not verifiable in CI:** live calls to Google, which need your login. Run `auth_status` in
   Claude Desktop after setup.
+
+### Follow-up: local-only network guarantee (owner will use their main account)
+
+The owner asked that everything run locally with no external servers, because they want to
+connect their main Google account.
+
+- **What "local" can and can't mean.** The server is a local stdio process with no listening
+  ports. NotebookLM itself is a Google cloud service, so the server must talk to Google.
+  Claude Desktop sends tool results to Anthropic (that's how Claude reads them). Credentials
+  never leave the laptop except to Google.
+- **Audit of every outbound destination:**
+  - In `notebooklm-py`, every network call targets Google. Its non-Google URLs are only text
+    in messages and docs.
+  - `curl_cffi` (a C-level HTTP stack that would bypass Python sockets) is not installed.
+  - Subprocesses happen only if the user sets `NOTEBOOKLM_REFRESH_CMD`; headless browser
+    recovery is off by default.
+  - FastMCP has an update checker that contacts `pypi.org`. It only runs with the banner,
+    which is disabled, and it is now also turned off explicitly.
+  - OpenTelemetry is API-only, with no exporter, so it makes no network calls.
+- **Enforcement: `netguard.py`.** Python audit hooks plus a `getaddrinfo` wrapper, installed
+  at startup and impossible to remove. They allow DNS only for Google domains and loopback,
+  and connections only to loopback, UNIX sockets, or IPs just resolved from an allowed Google
+  host. Raw-IP connections, UDP sends, proxies and child processes are all blocked.
+  `auth_status` reports whether the guard is active.
+- **Verification:**
+  - Guard tests run in subprocesses, because audit hooks can't be removed. They cover blocked
+    DNS, raw-IP TCP and UDP, httpx to non-Google hosts, proxies and process spawning, while
+    loopback and asyncio keep working. A real HTTPS request to Google passes the guard.
+  - The real stdio entry point reports the guard as active.
+  - The library's real login path was run against Google with fake cookies. It contacted only
+    `accounts.google.com` and `notebook.google.com`, Google returned an auth error, and the
+    guard never fired.
+  - That run caught a bug before release: httpx passes hostnames as bytes. It is fixed, and a
+    mutation-checked regression test covers it.
+- Google now redirects `notebooklm.google.com` to `notebook.google.com`, consistent with the
+  reported "Gemini Notebook" rename.
+- The README now documents the data flow and main-account precautions: disk encryption, no
+  syncing `~/.notebooklm`, and how to revoke the session.
 
 ---
 

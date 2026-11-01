@@ -14,23 +14,64 @@ A **local** MCP server that connects Claude Desktop to Google NotebookLM. It is 
 **Safety model:**
 - **Read and create only.** It can never delete, rename or share anything.
 - **No local file access.** It never reads your files or downloads artifacts.
-- **Runs only on your computer** over stdio.
+- **Runs only on your computer** over stdio. It never opens a network port.
+- **Talks to Google only.** A built-in network guard blocks every other destination and
+  stops the server from starting other programs.
 
 ---
 
-## ⚠️ Read first: account & security
+## ⚠️ Read first: privacy, network & your Google account
 
-This uses [`notebooklm-py`](https://github.com/teng-lin/notebooklm-py), an **unofficial**
-library that talks to NotebookLM using your Google login cookies.
+### Where your data goes
+```
+Your laptop                                      Internet
+┌──────────────────────────────────────┐
+│ Claude Desktop ─stdio─► this server ─┼──► Google only (notebook.google.com,
+│                         (local)      │    accounts.google.com, *.googleapis.com)
+│ Google login cookies stay here       │
+└──────────────────────────────────────┘
+Claude Desktop ──► Anthropic (Claude itself; sees what tools return in the chat)
+```
 
-1. **Use a dedicated Google account** for NotebookLM. The saved cookies
-   (`~/.notebooklm/profiles/default/storage_state.json`) give access to that *whole* Google
-   account (Gmail, Drive…), not only NotebookLM.
-2. Never share, commit or cloud-sync the `~/.notebooklm` folder.
-3. Google may change its private API at any time. If something breaks, see
-   [Updating](#updating-safely).
-4. Content from web pages and documents is treated as **untrusted**. Because the server has no
-   destructive tools, a malicious page can't delete or share your notebooks.
+- **This server runs entirely on your laptop.** Claude Desktop starts it as a local process
+  and talks to it through stdin/stdout. It never opens a network port and has no server of
+  its own.
+- **Its only outbound connections go to Google**, because NotebookLM is a Google cloud
+  service: your notebooks live on Google's servers, not on your laptop. A built-in **egress
+  guard** (`netguard.py`) enforces this. It refuses DNS lookups and connections to anything
+  that isn't a Google domain, including proxies, analytics and update checks, and it refuses
+  to start other programs. Ask Claude *"check my NotebookLM connection"*; `auth_status`
+  reports `"network": "Google-only egress guard active"`.
+- **Your Google login (cookies) never leaves your laptop** except to Google itself. Tools
+  never return cookies, tokens or file paths.
+- **What Claude reads goes to Anthropic.** Claude is a cloud model, so whatever a tool returns
+  into the chat (answers, notes, quiz questions, source text) is sent to Anthropic, like
+  anything else you share with Claude. Only ask about notebooks you're comfortable sharing
+  with Claude.
+
+### Using your main Google account
+The saved cookies (`~/.notebooklm/profiles/default/storage_state.json`) act as a **logged-in
+session for your whole Google account** (Gmail, Drive, Photos…), not only NotebookLM. Anyone
+or anything that can read that file can act as you. If you use your main account:
+
+1. **Turn on full-disk encryption**: FileVault on macOS, BitLocker on Windows.
+2. **Keep `~/.notebooklm` out of backups and sync** (iCloud Drive, OneDrive, Dropbox, Time
+   Machine to unencrypted disks). Never commit or share it.
+3. **Don't install untrusted software** on this laptop. Any program running as you can read
+   the file.
+4. **To revoke access at any time:** delete the `~/.notebooklm` folder, then in your Google
+   Account go to *Security → Your devices* and sign out the unrecognised session (or sign out
+   of all other sessions).
+5. Avoid `notebooklm login --browser-cookies`. It copies cookies from your everyday browser
+   profile.
+
+Other things to know:
+- `notebooklm-py` is an **unofficial** library using NotebookLM's private web API. Google can
+  change it at any time, and heavy automated use could in principle get an account flagged.
+  The server makes no requests on its own; it only acts when you ask Claude to.
+- Content from web pages and documents is treated as **untrusted**. Because the server has no
+  delete, rename or share tools, a malicious page can't delete or share your notebooks or
+  reach any non-Google server.
 
 ---
 
@@ -52,8 +93,8 @@ uv sync
 
 ## 2. Log in to NotebookLM (once)
 
-Log in with your **dedicated** Google account. On macOS, using your installed Google Chrome is
-the most reliable option:
+Log in with your Google account (see the main-account precautions above). On macOS, using
+your installed Google Chrome is the most reliable option:
 
 ```bash
 uv run notebooklm login --browser chrome
@@ -69,7 +110,8 @@ uv run playwright install chromium
 uv run notebooklm login
 ```
 
-A browser opens. Sign in, and the login is saved automatically. Sessions expire after a few
+A browser opens. Sign in, and the login is saved automatically. Login is the only step that
+uses a normal browser window, which talks to Google's sign-in pages. Sessions expire after a few
 weeks. When Claude says *"NotebookLM is not logged in"*, run the login command again (no
 restart needed).
 
@@ -219,6 +261,7 @@ notebooklm-mcp/
 │   ├── errors.py     # safe, actionable error messages
 │   ├── artifacts.py  # read quiz/report content inline, no files kept
 │   ├── profile.py    # local study profile (0600)
+│   ├── netguard.py   # egress guard: Google-only network, no child processes
 │   └── prompts.py    # server instructions + slash-command prompts
 ├── tests/            # fake client using the library's real data types
 └── server.py         # backward-compatible entry point

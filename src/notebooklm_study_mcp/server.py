@@ -27,7 +27,7 @@ from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import __version__, prompts
+from . import __version__, netguard, prompts
 from .artifacts import MEDIA_KINDS, TEXT_KINDS, read_text_artifact
 from .client import ClientProvider
 from .errors import LOGIN_HINT, handle_errors, to_tool_error
@@ -262,7 +262,13 @@ def build_server(
     async def auth_status() -> dict[str, Any]:
         """Check whether NotebookLM is logged in and reachable. Use this first if anything
         fails, and to confirm setup."""
-        info: dict[str, Any] = {"server_version": __version__, "read_only_mode": read_only}
+        info: dict[str, Any] = {
+            "server_version": __version__,
+            "read_only_mode": read_only,
+            "network": "Google-only egress guard active"
+            if netguard.is_installed()
+            else "egress guard NOT active (server not started via main())",
+        }
         try:
             c = await client()
             notebooks = await c.notebooks.list()
@@ -1070,6 +1076,15 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         stream=sys.stderr,
     )
+    # Local-only: never phone home for FastMCP update checks...
+    try:
+        import fastmcp
+
+        fastmcp.settings.check_for_updates = "off"
+    except Exception as exc:  # noqa: BLE001 - setting name may change between versions
+        logging.getLogger(__name__).debug("Could not disable update check: %s", exc)
+    # ...and refuse any network destination other than Google, process-wide.
+    netguard.install()
     build_server().run(show_banner=False)
 
 
