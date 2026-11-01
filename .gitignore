@@ -5,3 +5,8 @@ __pycache__/
 storage_state.json
 .notebooklm/
 .env
+.notebooklm-study/
+study_profile.json
+.pytest_cache/
+.ruff_cache/
+requirements-audit.txt

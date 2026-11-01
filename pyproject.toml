@@ -1,10 +1,46 @@
 [project]
-name = "notebooklm-assistant"
-version = "0.1.0"
-description = "Add your description here"
+name = "notebooklm-study-mcp"
+version = "1.0.0"
+description = "Local, read-and-create-only MCP server that connects Claude Desktop to Google NotebookLM for studying and a second brain."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "fastmcp>=2.14.4",
-    "notebooklm-py[browser]>=0.3.1",
+    # Upper bounds are deliberate: notebooklm-py talks to Google's private,
+    # undocumented API, so minor releases can change behaviour. Upgrade through
+    # a reviewed `uv lock --upgrade` + test run, not blindly.
+    "fastmcp>=4.1.4,<5",
+    "notebooklm-py[browser]>=0.8.6,<0.9",
 ]
+
+[project.scripts]
+notebooklm-study-mcp = "notebooklm_study_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/notebooklm_study_mcp"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC"]
+ignore = ["S101"]  # asserts are fine in tests
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "ASYNC"]

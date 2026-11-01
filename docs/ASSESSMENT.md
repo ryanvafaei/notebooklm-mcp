@@ -2,6 +2,10 @@
 
 _Reviewed: 2026-11-01 · Branch `claude/magical-pasteur-p36pn1` · Commit `860a652`_
 
+> **Status: implemented (v1.0.0).** Sections 1–7 below describe the project *as it was*
+> when reviewed. See [section 8](#8-decisions--implementation-status) for the owner's
+> decisions and how each finding was resolved.
+
 ---
 
 ## 1. How the project works
@@ -187,6 +191,53 @@ repo's value should be what upstream *doesn't* do: opinionated **workflows**, **
 **Definition of "ready to use":** fresh clone → `uv sync` → `notebooklm login` → one install
 command → in Claude: "make a podcast from <url> and save it" works end to end. The full test
 suite and `pip-audit` pass in CI, and no credentials leave `~/.notebooklm`.
+
+---
+
+## 8. Decisions & implementation status
+
+**Owner's answers:**
+- **Account and client:** personal Gmail (one dedicated account), Claude Desktop only.
+- **Priorities:** everything, with studying and a second brain first.
+- **Restrictions:** no artifact downloads, no local file uploads, read-and-create only.
+- **Shape:** self-contained, local server, English output, personal use.
+- **Key workflow:** "make study content and quizzes based on my example quiz, the notebook's
+  context, and my reading style."
+
+**Architecture chosen:** a self-contained FastMCP server (`src/notebooklm_study_mcp`) on the
+public `notebooklm-py` client API. The upstream `notebooklm-mcp` server is not used, as
+requested. It exposes 30 tools and 4 prompts.
+
+| Finding | Resolution |
+|---|---|
+| B1 ask/summary crash | Fixed: uses `AskResult.answer` / `.references`. A regression test fails if `.text` comes back. |
+| B2 summary via chat | `get_notebook` uses `notebooks.get_description()` (summary + suggested questions). |
+| B3 fire-and-forget generation | Added `wait_for_artifact`, `list_artifacts`, `read_artifact` (inline quiz/flashcards/report/mind map/table). |
+| B4 no file tool | Intentionally none (owner: no local uploads). Added Drive and YouTube instead. |
+| B5 no wait | Source adds wait for processing by default; URLs are restricted to public http(s) hosts. |
+| B6 hard-fail when logged out | Lazy single-flight client: starts instantly, explains `notebooklm login`, recovers without restart. |
+| B7 missing options | Follow-ups, source filters, and all format/style/length/difficulty options are exposed. |
+| B8 lifespan bug | Replaced by `ClientProvider`. |
+| S1 cookie = whole account | README requires a dedicated account; login stays in the library's 0700/0600 store. |
+| S2 76 advisories | notebooklm-py 0.8.6, fastmcp 4.1.4, mcp 2.3.0, full re-lock. **`pip-audit`: no known vulnerabilities.** CI audits weekly; Dependabot enabled. |
+| S3 unofficial API | Documented; versions capped `<0.9` / `<5`. |
+| S4 foreign clone URL | README points to `ryanvafaei/notebooklm-mcp`. |
+| S5 prompt injection | No delete/rename/share/update tools exist. Tool annotations (read-only vs create, none destructive). Server instructions mark source content as untrusted. Optional `NOTEBOOKLM_MCP_READ_ONLY=1`. |
+| S6 `uv sync --upgrade` | Removed from the docs; upper-bounded specs. |
+| S7 raw errors | All tools go through `handle_errors`: categorised messages with tokens and paths scrubbed. FastMCP `mask_error_details`. Logs record exception *types* only. |
+| S8 wrong SKILL.md | Removed (with the `main.py` stub). Workflow guidance now lives in server instructions + MCP prompts. |
+| No local file access | No tool takes a path. Artifact text is exported to a per-call 0700 temp dir, read, and deleted. |
+| Study profile | `~/.notebooklm-study/study_profile.json`, atomic write, 0600, field size caps. |
+
+**Verification:**
+- 23 pytest tests use a fake client built from the library's real dataclasses.
+- A mutation check confirmed that reintroducing B1 fails the suite.
+- An end-to-end stdio run of both entry points (`notebooklm-study-mcp` and legacy
+  `python server.py`) completed the handshake in about 1.3 s with no login. It listed 30 tools
+  and 4 prompts and returned the login hint.
+- Ruff lint and format are clean.
+- **Not verifiable in CI:** live calls to Google, which need your login. Run `auth_status` in
+  Claude Desktop after setup.
 
 ---
 
