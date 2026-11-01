@@ -1,18 +1,19 @@
-"""Local study profile: your reading style, an example quiz, and learner context.
+"""Local study profiles: reading style, example quiz and learner context, per subject.
 
-Stored as JSON at ``$NOTEBOOKLM_STUDY_HOME/study_profile.json`` (default
-``~/.notebooklm-study/``). The directory is created 0700 and the file written 0600
-via an atomic replace, so a crash never leaves a half-written profile. No
-credentials are ever stored here.
+One file, ``study_profile.json``, holds any number of named profiles (``default``,
+``biology``, ``law`` ...) plus which notebook uses which profile. A notebook without an
+assignment uses ``default``. Files written by v1.0 (a single flat profile) are migrated
+transparently into ``default``.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
+import re
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
+from typing import Any
+
+from .storage import default_home, read_json, write_json
 
 #: Hard caps keep a pasted example from bloating every tool response.
 FIELD_LIMITS: dict[str, int] = {
@@ -21,6 +22,9 @@ FIELD_LIMITS: dict[str, int] = {
     "learner_context": 4_000,
     "quiz_preferences": 4_000,
 }
+DEFAULT = "default"
+_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9 _-]{0,39}$")
+MAX_PROFILES = 50
 
 
 @dataclass
@@ -44,10 +48,21 @@ class StudyProfile:
     def to_dict(self) -> dict[str, str]:
         return asdict(self)
 
+    @classmethod
+    def from_dict(cls, raw: Any) -> StudyProfile:
+        if not isinstance(raw, dict):
+            return cls()
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: str(v) for k, v in raw.items() if k in known})
 
-def default_home() -> Path:
-    env = os.environ.get("NOTEBOOKLM_STUDY_HOME")
-    return Path(env).expanduser() if env else Path.home() / ".notebooklm-study"
+
+def normalize_name(name: str | None) -> str:
+    name = (name or DEFAULT).strip().lower()
+    if not _NAME_RE.match(name):
+        raise ValueError(
+            "Profile names are 1-40 characters: lowercase letters, digits, space, '_' or '-'."
+        )
+    return name
 
 
 class ProfileStore:
@@ -55,45 +70,66 @@ class ProfileStore:
         self.home = home or default_home()
         self.path = self.home / "study_profile.json"
 
-    def load(self) -> StudyProfile:
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return StudyProfile()
-        except (OSError, json.JSONDecodeError):
-            return StudyProfile()
-        known = {f.name for f in fields(StudyProfile)}
-        return StudyProfile(**{k: str(v) for k, v in raw.items() if k in known})
+    # -- raw document -------------------------------------------------------
+    def _doc(self) -> dict[str, Any]:
+        raw = read_json(self.path)
+        if "profiles" not in raw:  # v1 flat file -> migrate into "default"
+            legacy = StudyProfile.from_dict(raw)
+            raw = {"profiles": {} if legacy.is_empty() else {DEFAULT: legacy.to_dict()}}
+        raw.setdefault("profiles", {})
+        raw.setdefault("notebook_profiles", {})
+        raw["version"] = 2
+        return raw
 
-    def update(self, **changes: str | None) -> StudyProfile:
-        """Merge non-None fields into the stored profile and save it."""
-        profile = self.load()
-        for name, value in changes.items():
+    # -- queries ------------------------------------------------------------
+    def load(self, name: str | None = None) -> StudyProfile:
+        return StudyProfile.from_dict(self._doc()["profiles"].get(normalize_name(name)))
+
+    def resolve(self, notebook_id: str | None) -> tuple[str, StudyProfile]:
+        """Profile name and content used for a notebook (falls back to ``default``)."""
+        doc = self._doc()
+        name = doc["notebook_profiles"].get(notebook_id or "", DEFAULT)
+        if name not in doc["profiles"]:
+            name = DEFAULT
+        return name, StudyProfile.from_dict(doc["profiles"].get(name))
+
+    def names(self) -> list[str]:
+        return sorted(self._doc()["profiles"])
+
+    def assignments(self) -> dict[str, str]:
+        return dict(self._doc()["notebook_profiles"])
+
+    # -- updates ------------------------------------------------------------
+    def update(
+        self,
+        profile: str | None = DEFAULT,
+        *,
+        assign_notebooks: list[str] | None = None,
+        **changes: str | None,
+    ) -> StudyProfile:
+        """Merge non-None fields into a named profile, optionally assigning notebooks."""
+        name = normalize_name(profile)
+        doc = self._doc()
+        if name not in doc["profiles"] and len(doc["profiles"]) >= MAX_PROFILES:
+            raise ValueError(f"Too many profiles (max {MAX_PROFILES}).")
+        current = StudyProfile.from_dict(doc["profiles"].get(name))
+        for field_name, value in changes.items():
             if value is None:
                 continue
-            if name not in FIELD_LIMITS:
-                raise ValueError(f"Unknown profile field: {name}")
+            if field_name not in FIELD_LIMITS:
+                raise ValueError(f"Unknown profile field: {field_name}")
             value = value.strip()
-            if len(value) > FIELD_LIMITS[name]:
+            if len(value) > FIELD_LIMITS[field_name]:
                 raise ValueError(
-                    f"{name} is too long ({len(value)} chars; max {FIELD_LIMITS[name]})."
+                    f"{field_name} is too long ({len(value)} chars; "
+                    f"max {FIELD_LIMITS[field_name]})."
                 )
-            setattr(profile, name, value)
-        self._save(profile)
-        return profile
-
-    def _save(self, profile: StudyProfile) -> None:
-        self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
-        try:
-            self.home.chmod(0o700)
-        except OSError:
-            pass  # e.g. Windows; directory still lives in the user profile
-        fd, tmp = tempfile.mkstemp(dir=self.home, prefix=".profile-", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(profile.to_dict(), fh, ensure_ascii=False, indent=2)
-            os.chmod(tmp, 0o600)
-            os.replace(tmp, self.path)
-        except BaseException:
-            Path(tmp).unlink(missing_ok=True)
-            raise
+            setattr(current, field_name, value)
+        doc["profiles"][name] = current.to_dict()
+        for notebook_id in assign_notebooks or []:
+            notebook_id = notebook_id.strip()
+            if not notebook_id or len(notebook_id) > 200:
+                raise ValueError("Invalid notebook ID in assign_to_notebooks.")
+            doc["notebook_profiles"][notebook_id] = name
+        write_json(self.path, doc)
+        return current

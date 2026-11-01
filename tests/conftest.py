@@ -17,12 +17,15 @@ from notebooklm_study_mcp.profile import ProfileStore
 from notebooklm_study_mcp.server import build_server
 
 NB = "nb1"
+S1 = "3f9a2c1b-0000-4000-8000-000000000001"
+S2 = "7d4e8a90-0000-4000-8000-000000000002"
 SRC = nlm.Source(
-    id="s1",
+    id=S1,
     title="Cell Biology Ch.1",
     status=nlm.SourceStatus.READY,
     url="https://example.com/cells",
 )
+SRC2 = nlm.Source(id=S2, title="Metabolism Notes", status=nlm.SourceStatus.READY)
 QUIZ_JSON = {
     "title": "Cells quiz",
     "questions": [
@@ -80,7 +83,7 @@ class Notebooks(_Api):
 
 class Sources(_Api):
     async def list(self, notebook_id):
-        return [SRC]
+        return [SRC, SRC2]
 
     async def get_guide(self, notebook_id, source_id):
         return nlm.SourceGuide(summary="Cells are units of life.", keywords=("cell", "ATP"))
@@ -112,6 +115,20 @@ class Chat(_Api):
             source_ids=source_ids,
             conversation_id=conversation_id,
         )
+        if "FAIL" in question:
+            raise nlm.RateLimitError("quota")
+        if "two sources" in question:
+            return nlm.AskResult(
+                answer="Glycolysis happens in the cytosol [1]. The Krebs cycle runs in the "
+                "mitochondria [2]. Published in [2024].",
+                conversation_id="conv1",
+                turn_number=1,
+                is_follow_up=False,
+                references=[
+                    nlm.ChatReference(source_id=S2, citation_number=1),
+                    nlm.ChatReference(source_id=S1, citation_number=2),
+                ],
+            )
         return nlm.AskResult(
             answer="Mitochondria make ATP [1].",
             conversation_id="conv1",
@@ -119,11 +136,17 @@ class Chat(_Api):
             is_follow_up=conversation_id is not None,
             references=[
                 nlm.ChatReference(
-                    source_id="s1", citation_number=1, cited_text="The mitochondria..."
+                    source_id=S1, citation_number=1, cited_text="The mitochondria..."
                 ),
-                nlm.ChatReference(source_id="s1", citation_number=1, cited_text="dup"),
+                nlm.ChatReference(source_id=S1, citation_number=1, cited_text="dup"),
             ],
             next_steps=[nlm.NextStepSuggestion(question="What is ATP?", type_code=1)],
+        )
+
+    async def save_answer_as_note(self, notebook_id, ask_result, *, title=None):
+        self._rec.record("chat.save_answer_as_note", notebook_id, ask_result, title=title)
+        return nlm.Note(
+            id="n9", notebook_id=notebook_id, title=title or "Chat: ...", content=ask_result.answer
         )
 
 

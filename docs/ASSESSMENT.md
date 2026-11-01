@@ -277,6 +277,39 @@ connect their main Google account.
 - The README now documents the data flow and main-account precautions: disk encryption, no
   syncing `~/.notebooklm`, and how to revoke the session.
 
+### Follow-up: upstream issues & v1.1 workflow upgrade
+
+**Open issues on the upstream repo (`alfredang/notebooklm-mcp`), checked against this fork:**
+
+| Upstream issue | Applies here? | Outcome |
+|---|---|---|
+| #5 `source_count` / `result.text` AttributeErrors; `ask_notebook` hangs on big notebooks | Crashes: no, fixed in v1.0 (`sources_count`, `AskResult.answer`; tests use real library types). Hang: no. | notebooklm-py 0.8.6 bounds chat reads (180 s). Added mapping so `RPCTimeoutError` shows a clear "timed out" message, with a test. |
+| #8 same AttributeErrors on notebooklm-py 0.7.1 | No, fixed in v1.0. | Covered by existing regression tests. |
+| #12 `notebook_ask` returns the previous question's answer | Different codebase: the issue concerns a browser/DOM-scraping MCP (`notebook_ask`, `session_close`, `browser_options`). This project uses NotebookLM's RPC API. | Verified in the library: an ask without `conversation_id` sends **no history** (`cached_turns=[]`, `conversation_id=None`), so independent prompts can't be contaminated by earlier ones. The server now documents and tests this (every batch prompt is sent with `conversation_id=None`). |
+| #2 Windows `NotImplementedError` on `notebooklm login` | Yes on the old 0.3.1; no on 0.8.6. | The 0.8.x CLI uses asyncio's default Proactor loop on Windows; the old forced selector loop couldn't start Playwright's subprocess. Fixed by the dependency upgrade; added a troubleshooting row. Not CI-testable (login opens a real browser). |
+
+**Workflow upgrade, based on the owner's answers:**
+- **Documents:** output as a Claude Desktop artifact plus an optional NotebookLM note; light
+  edits only, no new facts; `[n]` citations plus a reference list.
+  - `ask_notebook_batch` sends up to 8 independent prompts per call, with per-prompt error
+    isolation and progress notifications.
+  - Answers carry stable `[src:<id prefix>]` tokens, and `finalize_citations`
+    deterministically renumbers them and builds the references. Non-citation brackets such
+    as `[2024]` are left untouched.
+  - New `draft_document` prompt.
+- **Study:**
+  - Profiles per subject, with notebook assignment and transparent migration of v1 files.
+  - Weak-spot tracking (`record_quiz_result` / `get_study_progress`, stored locally with
+    0600 permissions). `build_study_pack` includes progress and steers NotebookLM's
+    explanation towards weak spots.
+- **Notes:** `save_answer_as_note` stores an answer with NotebookLM's interactive citations.
+  It uses an in-memory cache of recent answers, so nothing extra is written to disk.
+- **Skill:** `skills/notebooklm-study/SKILL.md` for Claude Desktop Skills, which trigger
+  automatically. A test fails if it names a tool that doesn't exist.
+- **Verification:** 75 tests. Mutation checks confirmed that the profile-resolution and
+  citation-numbering tests catch regressions. An end-to-end stdio run lists 35 tools and
+  5 prompts, keeps `ctx` out of the tool schema, and has the guard active.
+
 ---
 
 ### Sources

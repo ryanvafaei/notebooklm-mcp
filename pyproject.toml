@@ -1,6 +1,6 @@
 [project]
 name = "notebooklm-study-mcp"
-version = "1.0.0"
+version = "1.1.0"
 description = "Local, read-and-create-only MCP server that connects Claude Desktop to Google NotebookLM for studying and a second brain."
 readme = "README.md"
 requires-python = ">=3.13"
