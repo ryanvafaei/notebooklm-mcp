@@ -53,7 +53,7 @@ def to_tool_error(exc: BaseException) -> ToolError:
         )
     if isinstance(exc, nlm.ValidationError):
         return ToolError(f"Invalid request: {scrub(str(exc))}")
-    if isinstance(exc, nlm.WaitTimeoutError | TimeoutError):
+    if isinstance(exc, nlm.WaitTimeoutError | nlm.RPCTimeoutError | TimeoutError):
         return ToolError(
             "Timed out waiting for NotebookLM. The job may still finish; check again shortly."
         )

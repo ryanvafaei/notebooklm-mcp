@@ -4,7 +4,7 @@ import sys
 
 import notebooklm as nlm
 import pytest
-from conftest import NB, call, make_server
+from conftest import NB, S1, call, make_server
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
@@ -19,7 +19,7 @@ DESTRUCTIVE_WORDS = ("delete", "remove", "rename", "share", "update_note", "set_
 async def test_no_destructive_or_file_tools(mcp_client):
     tools = await mcp_client.list_tools()
     names = {t.name for t in tools}
-    assert len(names) == 30
+    assert len(names) == 35
     for name in names:
         assert not any(w in name for w in DESTRUCTIVE_WORDS), name
     for t in tools:
@@ -52,12 +52,27 @@ async def test_read_only_mode_hides_create_tools(fake, store):
     assert "add_source_url" not in names
     assert "generate_quiz" not in names
     assert "update_study_profile" not in names
-    assert {"list_notebooks", "ask_notebook", "build_study_pack"} <= names
+    assert "record_quiz_result" not in names
+    assert "save_answer_as_note" not in names
+    assert {
+        "list_notebooks",
+        "ask_notebook",
+        "ask_notebook_batch",
+        "finalize_citations",
+        "build_study_pack",
+        "get_study_progress",
+    } <= names
 
 
 async def test_prompts_registered(mcp_client):
     names = {p.name for p in await mcp_client.list_prompts()}
-    assert names == {"study_session", "quiz_me", "capture", "setup_study_profile"}
+    assert names == {
+        "draft_document",
+        "study_session",
+        "quiz_me",
+        "capture",
+        "setup_study_profile",
+    }
 
 
 # ------------------------------------------------------------------ auth handling
@@ -85,7 +100,7 @@ async def test_ask_notebook_returns_answer_and_citations(mcp_client, fake):
     assert out["citations"] == [
         {
             "n": 1,
-            "source_id": "s1",
+            "source_id": S1,
             "source_title": "Cell Biology Ch.1",
             "cited_text": "The mitochondria...",
         }
@@ -128,11 +143,11 @@ async def test_not_found_is_clean_error(mcp_client):
 
 async def test_read_source_paging(mcp_client):
     out = await call(
-        mcp_client, "read_source", notebook_id=NB, source_id="s1", mode="text", max_chars=1000
+        mcp_client, "read_source", notebook_id=NB, source_id=S1, mode="text", max_chars=1000
     )
     assert out["total_chars"] == 1500 and len(out["content"]) == 1000
     assert out["next_offset"] == 1000
-    guide = await call(mcp_client, "read_source", notebook_id=NB, source_id="s1")
+    guide = await call(mcp_client, "read_source", notebook_id=NB, source_id=S1)
     assert guide["keywords"] == ["cell", "ATP"]
 
 
